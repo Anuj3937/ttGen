@@ -14,11 +14,11 @@ import React, {
 import type { BasicSetup, Division, Subject, Faculty, Room } from '@/lib/types';
 import type { GenerateInitialTimetableOutput } from '@/ai/flows/generate-initial-timetable';
 import { useSetup } from '@/context/SetupContext';
-import { useFirebase } from '@/firebase/provider';
+import { useFirebase } from '@/firebase/provider'; // Import useFirebase
 import { useDoc } from '@/firebase/firestore/use-doc';
 import { doc, setDoc } from 'firebase/firestore';
 
-// Define the shape of the data (this is your TimetableData interface)
+// Define the shape of the data
 interface TimetableData {
   basicSetup: BasicSetup | null;
   divisions: Division[];
@@ -42,7 +42,7 @@ interface TimetableContextType {
   ) => Promise<void>; // Save to DB
   isGenerated: boolean;
   setGenerated: Dispatch<SetStateAction<boolean>>;
-  isRestoring: boolean; // Loading state
+  isRestoring: boolean; // Loading state (includes auth check now)
 }
 
 const defaultTimetableData: TimetableData = {
@@ -78,53 +78,117 @@ export const TimetableProvider = ({ children }: { children: ReactNode }) => {
 
   // --- Firestore Persistence Logic ---
   const { departmentSetupId, setDepartmentSetupId } = useSetup();
-  const { firestore } = useFirebase();
-  const [isRestoring, setIsRestoring] = useState(true);
+  const { firestore, isUserLoading, user } = useFirebase(); // Get auth state
+  const [isRestoring, setIsRestoring] = useState(true); // Combined loading state
+  const [hasAttemptedLoad, setHasAttemptedLoad] = useState(false); // Track if load attempt was made
 
-  // 1. Create a memoized document reference
+  // 1. Create a memoized document reference (only when auth is ready and ID exists)
   const docRef = useMemo(
     () =>
-      departmentSetupId
+      !isUserLoading && user && departmentSetupId // Check auth is ready AND user exists
         ? doc(firestore, 'timetable_setups', departmentSetupId)
         : null,
-    [departmentSetupId, firestore]
+    [departmentSetupId, firestore, isUserLoading, user] // Add auth state dependencies
   );
 
-  // 2. Subscribe to the document
+  // 2. Subscribe to the document (useDoc hook)
   const { data: firestoreData, isLoading: isDocLoading } = useDoc(docRef);
 
-  // 3. Effect to restore data from Firestore on load
+  // 3. Effect to restore data from Firestore on load (only when auth is ready)
   useEffect(() => {
-    if (firestoreData) {
-      // If data exists in Firestore, load it into state
-      setTimetableData(firestoreData as TimetableData);
-      // Also restore the 'generated' status
-      if (
-        firestoreData.timetable &&
-        (firestoreData.timetable as any[]).length > 0
-      ) {
-        setGenerated(true);
+      // Don't do anything until Firebase auth check is complete
+      if (isUserLoading) {
+          setIsRestoring(true); // Keep showing loader while auth loads
+          return;
       }
-    }
-    // We are done restoring when the doc is no longer loading
-    if (!isDocLoading) {
-      setIsRestoring(false);
-    }
-  }, [firestoreData, isDocLoading]);
 
-  // 4. Create a function to save data to Firestore
+      // If user is not logged in (e.g., anonymous sign-in failed), stop loading
+      if (!user) {
+          console.warn("User not authenticated, cannot load or save data.");
+          setIsRestoring(false);
+          setHasAttemptedLoad(true); // Mark load as attempted (even if failed)
+          setTimetableData(defaultTimetableData); // Reset local data
+          setGenerated(false);
+          return;
+      }
+
+      // If we have an ID and haven't loaded yet, useDoc will trigger loading
+      if (departmentSetupId && !hasAttemptedLoad) {
+           setIsRestoring(isDocLoading); // Reflect doc loading state
+      } else {
+           // No ID or load already attempted, we are done restoring
+           setIsRestoring(false);
+      }
+
+      // If firestoreData becomes available, update state
+      if (firestoreData && !isDocLoading) {
+          console.log("Restoring data from Firestore:", firestoreData);
+          setTimetableData(firestoreData as TimetableData);
+          if (
+              firestoreData.timetable &&
+              (firestoreData.timetable as any[]).length > 0
+          ) {
+              setGenerated(true);
+          } else {
+              setGenerated(false); // Ensure generated is false if no timetable data
+          }
+          setHasAttemptedLoad(true); // Mark load as complete
+      } else if (!isDocLoading && departmentSetupId && !firestoreData && !hasAttemptedLoad) {
+          // If doc finished loading, ID exists, but no data found (e.g., new setup ID)
+          console.log("No existing data found for setup ID:", departmentSetupId);
+          setTimetableData(defaultTimetableData); // Ensure clean state
+          setGenerated(false);
+          setHasAttemptedLoad(true); // Mark load attempt as complete
+      } else if (!departmentSetupId && !isUserLoading) {
+          // If no setup ID and auth is ready, reset to default and stop loading
+           console.log("No departmentSetupId, resetting state.");
+           setTimetableData(defaultTimetableData);
+           setGenerated(false);
+           setIsRestoring(false);
+           setHasAttemptedLoad(true); // Mark as "attempted" (nothing to load)
+      }
+
+  }, [firestoreData, isDocLoading, departmentSetupId, isUserLoading, user, hasAttemptedLoad]);
+
+
+  // 4. Create a function to save data to Firestore (check auth before saving)
   const saveDataToFirestore = useCallback(
     async (dataToSave: Partial<TimetableData>) => {
+      // --- Wait for Auth Check ---
+      if (isUserLoading) {
+        console.warn('Auth is still loading. Save deferred.');
+        // Optionally show a toast or handle this case
+        return;
+      }
+      if (!user) {
+        console.error('User not authenticated. Cannot save data.');
+        // Show error toast
+        // toast({ variant: 'destructive', title: 'Error', description: 'You must be signed in to save.' });
+        return;
+      }
+      // --- End Auth Check ---
+
       let currentId = departmentSetupId;
 
       // If this is the first save, create a new ID
       if (!currentId) {
         currentId = crypto.randomUUID();
-        setDepartmentSetupId(currentId);
+        console.log("Assigning new setup ID:", currentId);
+        setDepartmentSetupId(currentId); // This will trigger a re-render and docRef update
       }
 
-      const currentDocRef = doc(firestore, 'timetable_setups', currentId);
+      // Ensure we use the potentially *new* ID for the doc ref
+      const effectiveId = currentId || departmentSetupId;
+      if (!effectiveId) {
+           console.error("No valid setup ID available for saving.");
+           return;
+      }
+
+      const currentDocRef = doc(firestore, 'timetable_setups', effectiveId);
+      // Merge incoming data with the *current* state before saving
       const updatedData = { ...timetableData, ...dataToSave };
+
+      console.log("Saving data to Firestore:", effectiveId, updatedData);
 
       // Update local state immediately for a responsive feel
       setTimetableData(updatedData);
@@ -135,7 +199,7 @@ export const TimetableProvider = ({ children }: { children: ReactNode }) => {
         // You could use toast() here to show a save error
       });
     },
-    [departmentSetupId, firestore, setDepartmentSetupId, timetableData]
+    [departmentSetupId, firestore, setDepartmentSetupId, timetableData, isUserLoading, user] // Add auth dependencies
   );
   // --- End of Persistence Logic ---
 
@@ -149,10 +213,10 @@ export const TimetableProvider = ({ children }: { children: ReactNode }) => {
     prevStep,
     timetableData,
     setTimetableData,
-    saveDataToFirestore, // Pass down the save function
+    saveDataToFirestore,
     isGenerated,
     setGenerated,
-    isRestoring, // Pass down the loading state
+    isRestoring, // Pass down the combined loading state
   };
 
   return (
