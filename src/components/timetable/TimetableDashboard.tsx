@@ -869,7 +869,7 @@ export default function TimetableDashboard() {
           </CardHeader>
           <CardContent>
             <ul className="list-disc pl-5 space-y-1">
-              {unassignedSubjects.map(name => (
+              {unassignedSubjects.map((name : string) => (
                 <li key={name}>{name}</li>
               ))}
             </ul>
