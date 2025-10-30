@@ -41,29 +41,33 @@ const roomsSchema = z.object({
 });
 
 export default function Checkpoint5() {
-  const { timetableData, setTimetableData, nextStep, prevStep } = useTimetable();
+  const { timetableData, nextStep, prevStep, saveDataToFirestore } = // Get new function
+    useTimetable();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const form = useForm<z.infer<typeof roomsSchema>>({
     resolver: zodResolver(roomsSchema),
     defaultValues: {
-      rooms: timetableData.rooms.length > 0 ? timetableData.rooms : [
-        {
-          id: crypto.randomUUID(),
-          roomNumber: 'CR-101',
-          roomType: 'Classroom',
-          capacity: 70,
-          building: 'Main Building',
-        },
-        {
-          id: crypto.randomUUID(),
-          roomNumber: 'LAB-1',
-          roomType: 'Lab',
-          capacity: 30,
-          building: 'Main Building',
-        },
-      ],
+      rooms:
+        timetableData.rooms.length > 0
+          ? timetableData.rooms
+          : [
+              {
+                id: crypto.randomUUID(),
+                roomNumber: 'CR-101',
+                roomType: 'Classroom',
+                capacity: 70,
+                building: 'Main Building',
+              },
+              {
+                id: crypto.randomUUID(),
+                roomNumber: 'LAB-1',
+                roomType: 'Lab',
+                capacity: 30,
+                building: 'Main Building',
+              },
+            ],
     },
   });
 
@@ -71,7 +75,7 @@ export default function Checkpoint5() {
     control: form.control,
     name: 'rooms',
   });
-  
+
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
@@ -80,13 +84,18 @@ export default function Checkpoint5() {
         skipEmptyLines: true,
         complete: (results) => {
           try {
-            const transformedData = (results.data as any[]).map(item => ({
-                ...item,
-                capacity: Number(item.capacity),
+            const transformedData = (results.data as any[]).map((item) => ({
+              ...item,
+              capacity: Number(item.capacity),
             }));
 
-            const parsedData = z.array(roomSchema.omit({id: true})).parse(transformedData);
-            const dataWithIds = parsedData.map(item => ({ ...item, id: crypto.randomUUID() }));
+            const parsedData = z
+              .array(roomSchema.omit({ id: true }))
+              .parse(transformedData);
+            const dataWithIds = parsedData.map((item) => ({
+              ...item,
+              id: crypto.randomUUID(),
+            }));
             replace(dataWithIds);
             toast({
               title: 'Import Successful',
@@ -94,13 +103,15 @@ export default function Checkpoint5() {
             });
           } catch (error) {
             if (error instanceof z.ZodError) {
-               toast({
+              toast({
                 variant: 'destructive',
                 title: 'Import Failed',
-                description: `CSV data is invalid. ${error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')}`,
+                description: `CSV data is invalid. ${error.errors
+                  .map((e) => `${e.path.join('.')}: ${e.message}`)
+                  .join(', ')}`,
               });
             } else {
-               toast({
+              toast({
                 variant: 'destructive',
                 title: 'Import Failed',
                 description: 'An unexpected error occurred during CSV import.',
@@ -109,25 +120,26 @@ export default function Checkpoint5() {
           }
         },
         error: (error) => {
-           toast({
+          toast({
             variant: 'destructive',
             title: 'Import Failed',
             description: `Error parsing CSV file: ${error.message}`,
           });
-        }
+        },
       });
     }
-     // Reset file input
+    // Reset file input
     if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+      fileInputRef.current.value = '';
     }
   };
 
-
-  const onSubmit = (data: z.infer<typeof roomsSchema>) => {
-    setTimetableData((prev) => ({ ...prev, rooms: data.rooms }));
+  // --- UPDATED onSubmit ---
+  const onSubmit = async (data: z.infer<typeof roomsSchema>) => {
+    await saveDataToFirestore({ rooms: data.rooms });
     nextStep();
   };
+  // --- END UPDATE ---
 
   return (
     <CheckpointWrapper
@@ -138,8 +150,12 @@ export default function Checkpoint5() {
     >
       <Form {...form}>
         <form className="space-y-6">
-           <div className="flex justify-end">
-            <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()}>
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => fileInputRef.current?.click()}
+            >
               <Upload className="mr-2 h-4 w-4" />
               Import from CSV
             </Button>

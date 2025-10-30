@@ -45,7 +45,7 @@ const subjectsSchema = z.object({
 });
 
 export default function Checkpoint3() {
-  const { timetableData, setTimetableData, nextStep, prevStep } =
+  const { timetableData, nextStep, prevStep, saveDataToFirestore } = // Get new function
     useTimetable();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -53,17 +53,22 @@ export default function Checkpoint3() {
   const form = useForm<z.infer<typeof subjectsSchema>>({
     resolver: zodResolver(subjectsSchema),
     defaultValues: {
-      subjects: timetableData.subjects.length > 0 ? timetableData.subjects : [{
-        id: crypto.randomUUID(),
-        subjectCode: 'CS301',
-        subjectName: 'Data Structures',
-        branch: timetableData.basicSetup?.branches[0] || '',
-        year: 'SE',
-        semester: 'III',
-        theoryHoursPerWeek: 3,
-        practicalHoursPerWeek: 2,
-        type: 'Core',
-      }],
+      subjects:
+        timetableData.subjects.length > 0
+          ? timetableData.subjects
+          : [
+              {
+                id: crypto.randomUUID(),
+                subjectCode: 'CS301',
+                subjectName: 'Data Structures',
+                branch: timetableData.basicSetup?.branches[0] || '',
+                year: 'SE',
+                semester: 'III',
+                theoryHoursPerWeek: 3,
+                practicalHoursPerWeek: 2,
+                type: 'Core',
+              },
+            ],
     },
   });
 
@@ -71,7 +76,7 @@ export default function Checkpoint3() {
     control: form.control,
     name: 'subjects',
   });
-  
+
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
@@ -81,14 +86,19 @@ export default function Checkpoint3() {
         complete: (results) => {
           try {
             // Transform checkbox string to boolean
-            const transformedData = (results.data as any[]).map(item => ({
-                ...item,
-                theoryHoursPerWeek: Number(item.theoryHoursPerWeek) || 0,
-                practicalHoursPerWeek: Number(item.practicalHoursPerWeek) || 0,
+            const transformedData = (results.data as any[]).map((item) => ({
+              ...item,
+              theoryHoursPerWeek: Number(item.theoryHoursPerWeek) || 0,
+              practicalHoursPerWeek: Number(item.practicalHoursPerWeek) || 0,
             }));
 
-            const parsedData = z.array(subjectSchema.omit({id: true})).parse(transformedData);
-            const dataWithIds = parsedData.map(item => ({ ...item, id: crypto.randomUUID() }));
+            const parsedData = z
+              .array(subjectSchema.omit({ id: true }))
+              .parse(transformedData);
+            const dataWithIds = parsedData.map((item) => ({
+              ...item,
+              id: crypto.randomUUID(),
+            }));
             replace(dataWithIds);
             toast({
               title: 'Import Successful',
@@ -96,13 +106,15 @@ export default function Checkpoint3() {
             });
           } catch (error) {
             if (error instanceof z.ZodError) {
-               toast({
+              toast({
                 variant: 'destructive',
                 title: 'Import Failed',
-                description: `CSV data is invalid. ${error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')}`,
+                description: `CSV data is invalid. ${error.errors
+                  .map((e) => `${e.path.join('.')}: ${e.message}`)
+                  .join(', ')}`,
               });
             } else {
-               toast({
+              toast({
                 variant: 'destructive',
                 title: 'Import Failed',
                 description: 'An unexpected error occurred during CSV import.',
@@ -111,24 +123,26 @@ export default function Checkpoint3() {
           }
         },
         error: (error) => {
-           toast({
+          toast({
             variant: 'destructive',
             title: 'Import Failed',
             description: `Error parsing CSV file: ${error.message}`,
           });
-        }
+        },
       });
     }
-     // Reset file input
+    // Reset file input
     if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+      fileInputRef.current.value = '';
     }
   };
 
-  const onSubmit = (data: z.infer<typeof subjectsSchema>) => {
-    setTimetableData((prev) => ({ ...prev, subjects: data.subjects }));
+  // --- UPDATED onSubmit ---
+  const onSubmit = async (data: z.infer<typeof subjectsSchema>) => {
+    await saveDataToFirestore({ subjects: data.subjects });
     nextStep();
   };
+  // --- END UPDATE ---
 
   const selectedBranches = timetableData.basicSetup?.branches || [];
 
@@ -142,7 +156,11 @@ export default function Checkpoint3() {
       <Form {...form}>
         <form className="space-y-6">
           <div className="flex justify-end">
-            <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => fileInputRef.current?.click()}
+            >
               <Upload className="mr-2 h-4 w-4" />
               Import from CSV
             </Button>
@@ -285,7 +303,7 @@ export default function Checkpoint3() {
                       />
                     </TableCell>
                     <TableCell>
-                       <FormField
+                      <FormField
                         control={form.control}
                         name={`subjects.${index}.theoryHoursPerWeek`}
                         render={({ field }) => (

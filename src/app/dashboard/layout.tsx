@@ -26,6 +26,7 @@ import {
   SidebarFooter,
 } from '@/components/ui/sidebar';
 import { useSetup } from '@/context/SetupContext';
+import { TimetableProvider } from '@/context/TimetableContext'; // <-- ADD IMPORT
 
 const menuItems = [
   { href: '/dashboard/subjects', label: 'Subjects', icon: Book },
@@ -97,14 +98,19 @@ export default function DashboardLayout({
         </SidebarContent>
         <SidebarFooter>
           {departmentSetupId && (
-             <div className="p-2 group-data-[collapsible=icon]:hidden">
-                <p className="text-xs text-muted-foreground">Current Setup ID:</p>
-                <p className="text-xs font-mono break-all">{departmentSetupId}</p>
-             </div>
+            <div className="p-2 group-data-[collapsible=icon]:hidden">
+              <p className="text-xs text-muted-foreground">Current Setup ID:</p>
+              <p className="text-xs font-mono break-all">
+                {departmentSetupId}
+              </p>
+            </div>
           )}
         </SidebarFooter>
       </Sidebar>
-      <SidebarInset>{children}</SidebarInset>
+      <SidebarInset>
+        {/* --- WRAP CHILDREN WITH PROVIDER --- */}
+        <TimetableProvider>{children}</TimetableProvider>
+      </SidebarInset>
     </SidebarProvider>
   );
 }

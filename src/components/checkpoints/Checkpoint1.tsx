@@ -21,7 +21,7 @@ import CheckpointWrapper from './CheckpointWrapper';
 import { BRANCHES, WORKING_DAYS, TIME_SLOTS } from '@/lib/constants';
 
 export default function Checkpoint1() {
-  const { timetableData, setTimetableData, nextStep } = useTimetable();
+  const { timetableData, nextStep, saveDataToFirestore } = useTimetable(); // Get new function
 
   const form = useForm<BasicSetup>({
     resolver: zodResolver(basicSetupSchema),
@@ -44,10 +44,12 @@ export default function Checkpoint1() {
     },
   });
 
-  const onSubmit = (data: BasicSetup) => {
-    setTimetableData((prev) => ({ ...prev, basicSetup: data }));
+  // --- UPDATED onSubmit ---
+  const onSubmit = async (data: BasicSetup) => {
+    await saveDataToFirestore({ basicSetup: data });
     nextStep();
   };
+  // --- END UPDATE ---
 
   return (
     <CheckpointWrapper
@@ -114,7 +116,10 @@ export default function Checkpoint1() {
                                 checked={field.value?.includes(item)}
                                 onCheckedChange={(checked) => {
                                   return checked
-                                    ? field.onChange([...(field.value || []), item])
+                                    ? field.onChange([
+                                        ...(field.value || []),
+                                        item,
+                                      ])
                                     : field.onChange(
                                         field.value?.filter(
                                           (value) => value !== item
@@ -177,39 +182,42 @@ export default function Checkpoint1() {
                   <FormLabel className="text-base">Working Days</FormLabel>
                 </div>
                 <div className="flex flex-wrap gap-4">
-                {WORKING_DAYS.map((item) => (
-                  <FormField
-                    key={item}
-                    control={form.control}
-                    name="workingDays"
-                    render={({ field }) => {
-                      return (
-                        <FormItem
-                          key={item}
-                          className="flex flex-row items-start space-x-3 space-y-0"
-                        >
-                          <FormControl>
-                            <Checkbox
-                              checked={field.value?.includes(item)}
-                              onCheckedChange={(checked) => {
-                                return checked
-                                  ? field.onChange([...(field.value || []), item])
-                                  : field.onChange(
-                                      field.value?.filter(
-                                        (value) => value !== item
-                                      )
-                                    );
-                              }}
-                            />
-                          </FormControl>
-                          <FormLabel className="font-normal">
-                            {item}
-                          </FormLabel>
-                        </FormItem>
-                      );
-                    }}
-                  />
-                ))}
+                  {WORKING_DAYS.map((item) => (
+                    <FormField
+                      key={item}
+                      control={form.control}
+                      name="workingDays"
+                      render={({ field }) => {
+                        return (
+                          <FormItem
+                            key={item}
+                            className="flex flex-row items-start space-x-3 space-y-0"
+                          >
+                            <FormControl>
+                              <Checkbox
+                                checked={field.value?.includes(item)}
+                                onCheckedChange={(checked) => {
+                                  return checked
+                                    ? field.onChange([
+                                        ...(field.value || []),
+                                        item,
+                                      ])
+                                    : field.onChange(
+                                        field.value?.filter(
+                                          (value) => value !== item
+                                        )
+                                      );
+                                }}
+                              />
+                            </FormControl>
+                            <FormLabel className="font-normal">
+                              {item}
+                            </FormLabel>
+                          </FormItem>
+                        );
+                      }}
+                    />
+                  ))}
                 </div>
                 <FormMessage />
               </FormItem>
@@ -223,13 +231,21 @@ export default function Checkpoint1() {
               <FormItem>
                 <div className="mb-4">
                   <FormLabel className="text-base">Time Slots</FormLabel>
-                  <FormDescription>Select at least 4 teaching slots. Lunch break is non-teaching.</FormDescription>
+                  <FormDescription>
+                    Select at least 4 teaching slots. Lunch break is
+                    non-teaching.
+                  </FormDescription>
                 </div>
                 <div className="space-y-2">
                   <h4 className="font-medium">Morning</h4>
                   <div className="flex flex-wrap gap-4">
                     {TIME_SLOTS.morning.map((item) => (
-                      <TimeSlotCheckbox key={item} item={item} control={form.control} name="timeSlots" />
+                      <TimeSlotCheckbox
+                        key={item}
+                        item={item}
+                        control={form.control}
+                        name="timeSlots"
+                      />
                     ))}
                   </div>
                   <h4 className="font-medium">Lunch (Non-teaching)</h4>
@@ -242,9 +258,14 @@ export default function Checkpoint1() {
                     </div>
                   </div>
                   <h4 className="font-medium">Afternoon</h4>
-                   <div className="flex flex-wrap gap-4">
+                  <div className="flex flex-wrap gap-4">
                     {TIME_SLOTS.afternoon.map((item) => (
-                      <TimeSlotCheckbox key={item} item={item} control={form.control} name="timeSlots" />
+                      <TimeSlotCheckbox
+                        key={item}
+                        item={item}
+                        control={form.control}
+                        name="timeSlots"
+                      />
                     ))}
                   </div>
                 </div>
@@ -265,11 +286,10 @@ export default function Checkpoint1() {
                   />
                 </FormControl>
                 <div className="space-y-1 leading-none">
-                  <FormLabel>
-                    Prefer afternoon slots for labs
-                  </FormLabel>
+                  <FormLabel>Prefer afternoon slots for labs</FormLabel>
                   <FormDescription>
-                    Recommended, but not mandatory. The algorithm will prioritize this if checked.
+                    Recommended, but not mandatory. The algorithm will
+                    prioritize this if checked.
                   </FormDescription>
                 </div>
               </FormItem>
@@ -282,8 +302,16 @@ export default function Checkpoint1() {
 }
 
 // Helper component for time slot checkboxes
-const TimeSlotCheckbox = ({ item, control, name }: { item: string, control: any, name: "timeSlots" }) => (
-   <FormField
+const TimeSlotCheckbox = ({
+  item,
+  control,
+  name,
+}: {
+  item: string;
+  control: any;
+  name: 'timeSlots';
+}) => (
+  <FormField
     key={item}
     control={control}
     name={name}
@@ -300,16 +328,12 @@ const TimeSlotCheckbox = ({ item, control, name }: { item: string, control: any,
                 return checked
                   ? field.onChange([...(field.value || []), item])
                   : field.onChange(
-                      field.value?.filter(
-                        (value) => value !== item
-                      )
+                      field.value?.filter((value) => value !== item)
                     );
               }}
             />
           </FormControl>
-          <FormLabel className="font-normal">
-            {item}
-          </FormLabel>
+          <FormLabel className="font-normal">{item}</FormLabel>
         </FormItem>
       );
     }}

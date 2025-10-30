@@ -35,7 +35,14 @@ import { facultySchema } from '@/lib/types';
 import { FACULTY_DESIGNATIONS } from '@/lib/constants';
 import { Checkbox } from '../ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '../ui/command';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '../ui/command';
 import { Check, ChevronsUpDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ScrollArea } from '../ui/scroll-area';
@@ -48,7 +55,7 @@ const facultyListSchema = z.object({
 });
 
 export default function Checkpoint4() {
-  const { timetableData, setTimetableData, nextStep, prevStep } =
+  const { timetableData, nextStep, prevStep, saveDataToFirestore } = // Get new function
     useTimetable();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -56,17 +63,20 @@ export default function Checkpoint4() {
   const form = useForm<z.infer<typeof facultyListSchema>>({
     resolver: zodResolver(facultyListSchema),
     defaultValues: {
-      faculty: timetableData.faculty.length > 0 ? timetableData.faculty : [
-        {
-          id: crypto.randomUUID(),
-          facultyName: 'Dr. Smith',
-          employeeId: 'EMP001',
-          designation: 'Professor',
-          maxWeeklyHours: 18,
-          qualifiedSubjects: [],
-          preferLabs: false,
-        }
-      ],
+      faculty:
+        timetableData.faculty.length > 0
+          ? timetableData.faculty
+          : [
+              {
+                id: crypto.randomUUID(),
+                facultyName: 'Dr. Smith',
+                employeeId: 'EMP001',
+                designation: 'Professor',
+                maxWeeklyHours: 18,
+                qualifiedSubjects: [],
+                preferLabs: false,
+              },
+            ],
     },
   });
 
@@ -74,7 +84,7 @@ export default function Checkpoint4() {
     control: form.control,
     name: 'faculty',
   });
-  
+
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
@@ -83,15 +93,26 @@ export default function Checkpoint4() {
         skipEmptyLines: true,
         complete: (results) => {
           try {
-             const transformedData = (results.data as any[]).map(item => ({
-                ...item,
-                maxWeeklyHours: Number(item.maxWeeklyHours),
-                qualifiedSubjects: item.qualifiedSubjects ? item.qualifiedSubjects.split(',').map((s:string) => s.trim()) : [],
-                preferLabs: item.preferLabs?.toLowerCase() === 'true' || item.preferLabs === '1'
+            const transformedData = (results.data as any[]).map((item) => ({
+              ...item,
+              maxWeeklyHours: Number(item.maxWeeklyHours),
+              qualifiedSubjects: item.qualifiedSubjects
+                ? item.qualifiedSubjects
+                    .split(',')
+                    .map((s: string) => s.trim())
+                : [],
+              preferLabs:
+                item.preferLabs?.toLowerCase() === 'true' ||
+                item.preferLabs === '1',
             }));
 
-            const parsedData = z.array(facultySchema.omit({id: true})).parse(transformedData);
-            const dataWithIds = parsedData.map(item => ({ ...item, id: crypto.randomUUID() }));
+            const parsedData = z
+              .array(facultySchema.omit({ id: true }))
+              .parse(transformedData);
+            const dataWithIds = parsedData.map((item) => ({
+              ...item,
+              id: crypto.randomUUID(),
+            }));
             replace(dataWithIds);
             toast({
               title: 'Import Successful',
@@ -99,13 +120,15 @@ export default function Checkpoint4() {
             });
           } catch (error) {
             if (error instanceof z.ZodError) {
-               toast({
+              toast({
                 variant: 'destructive',
                 title: 'Import Failed',
-                description: `CSV data is invalid. ${error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')}`,
+                description: `CSV data is invalid. ${error.errors
+                  .map((e) => `${e.path.join('.')}: ${e.message}`)
+                  .join(', ')}`,
               });
             } else {
-               toast({
+              toast({
                 variant: 'destructive',
                 title: 'Import Failed',
                 description: 'An unexpected error occurred during CSV import.',
@@ -114,26 +137,28 @@ export default function Checkpoint4() {
           }
         },
         error: (error) => {
-           toast({
+          toast({
             variant: 'destructive',
             title: 'Import Failed',
             description: `Error parsing CSV file: ${error.message}`,
           });
-        }
+        },
       });
     }
     // Reset file input
     if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+      fileInputRef.current.value = '';
     }
   };
 
-  const onSubmit = (data: z.infer<typeof facultyListSchema>) => {
-    setTimetableData((prev) => ({ ...prev, faculty: data.faculty }));
+  // --- UPDATED onSubmit ---
+  const onSubmit = async (data: z.infer<typeof facultyListSchema>) => {
+    await saveDataToFirestore({ faculty: data.faculty });
     nextStep();
   };
+  // --- END UPDATE ---
 
-  const subjectOptions = timetableData.subjects.map(s => ({
+  const subjectOptions = timetableData.subjects.map((s) => ({
     label: `${s.subjectCode} - ${s.subjectName}`,
     value: s.subjectCode,
   }));
@@ -148,7 +173,11 @@ export default function Checkpoint4() {
       <Form {...form}>
         <form className="space-y-6">
           <div className="flex justify-end">
-            <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => fileInputRef.current?.click()}
+            >
               <Upload className="mr-2 h-4 w-4" />
               Import from CSV
             </Button>
@@ -239,7 +268,7 @@ export default function Checkpoint4() {
                         render={({ field }) => (
                           <FormItem>
                             <FormControl>
-                              <Input type="number" {...field} min={1}/>
+                              <Input type="number" {...field} min={1} />
                             </FormControl>
                             <FormMessage />
                           </FormItem>
@@ -252,20 +281,21 @@ export default function Checkpoint4() {
                         name={`faculty.${index}.qualifiedSubjects`}
                         render={({ field }) => (
                           <FormItem>
-                             <Popover>
+                            <Popover>
                               <PopoverTrigger asChild>
                                 <FormControl>
                                   <Button
                                     variant="outline"
                                     role="combobox"
                                     className={cn(
-                                      "w-[200px] justify-between",
-                                      !field.value?.length && "text-muted-foreground"
+                                      'w-[200px] justify-between',
+                                      !field.value?.length &&
+                                        'text-muted-foreground'
                                     )}
                                   >
                                     {field.value?.length > 0
                                       ? `${field.value.length} selected`
-                                      : "Select subjects"}
+                                      : 'Select subjects'}
                                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                                   </Button>
                                 </FormControl>
@@ -274,31 +304,41 @@ export default function Checkpoint4() {
                                 <Command>
                                   <CommandInput placeholder="Search subjects..." />
                                   <CommandList>
-                                    <CommandEmpty>No subjects found.</CommandEmpty>
+                                    <CommandEmpty>
+                                      No subjects found.
+                                    </CommandEmpty>
                                     <CommandGroup>
-                                       <ScrollArea className="h-48">
-                                      {subjectOptions.map((option) => (
-                                        <CommandItem
-                                          key={option.value}
-                                          onSelect={() => {
-                                            const selected = field.value || [];
-                                            const newValue = selected.includes(option.value)
-                                              ? selected.filter((v) => v !== option.value)
-                                              : [...selected, option.value];
-                                            field.onChange(newValue);
-                                          }}
-                                        >
-                                          <Check
-                                            className={cn(
-                                              "mr-2 h-4 w-4",
-                                              (field.value || []).includes(option.value)
-                                                ? "opacity-100"
-                                                : "opacity-0"
-                                            )}
-                                          />
-                                          {option.label}
-                                        </CommandItem>
-                                      ))}
+                                      <ScrollArea className="h-48">
+                                        {subjectOptions.map((option) => (
+                                          <CommandItem
+                                            key={option.value}
+                                            onSelect={() => {
+                                              const selected = field.value || [];
+                                              const newValue =
+                                                selected.includes(option.value)
+                                                  ? selected.filter(
+                                                      (v) => v !== option.value
+                                                    )
+                                                  : [
+                                                      ...selected,
+                                                      option.value,
+                                                    ];
+                                              field.onChange(newValue);
+                                            }}
+                                          >
+                                            <Check
+                                              className={cn(
+                                                'mr-2 h-4 w-4',
+                                                (field.value || []).includes(
+                                                  option.value
+                                                )
+                                                  ? 'opacity-100'
+                                                  : 'opacity-0'
+                                              )}
+                                            />
+                                            {option.label}
+                                          </CommandItem>
+                                        ))}
                                       </ScrollArea>
                                     </CommandGroup>
                                   </CommandList>
@@ -310,7 +350,7 @@ export default function Checkpoint4() {
                         )}
                       />
                     </TableCell>
-                     <TableCell>
+                    <TableCell>
                       <FormField
                         control={form.control}
                         name={`faculty.${index}.preferLabs`}

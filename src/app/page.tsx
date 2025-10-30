@@ -14,10 +14,10 @@ import { useContext, useEffect } from 'react';
 import { TimetableContext } from '@/context/TimetableContext';
 import { useSetup } from '@/context/SetupContext';
 import { useRouter } from 'next/navigation';
-
+import { Loader2 } from 'lucide-react';
 
 const AppContent = () => {
-  const { step, isGenerated, timetableData } = useContext(TimetableContext);
+  const { step, isGenerated, isRestoring } = useContext(TimetableContext);
   const { departmentSetupId } = useSetup();
   const router = useRouter();
 
@@ -28,6 +28,16 @@ const AppContent = () => {
     }
   }, [departmentSetupId, isGenerated, router]);
 
+  // --- ADDED LOADING STATE ---
+  if (isRestoring) {
+    return (
+      <div className="flex h-screen w-full flex-col items-center justify-center gap-4">
+        <Loader2 className="h-10 w-10 animate-spin text-primary" />
+        <p className="text-muted-foreground">Loading your timetable setup...</p>
+      </div>
+    );
+  }
+  // --- END LOADING STATE ---
 
   // If timetable has been generated, show the dashboard
   if (isGenerated) {
@@ -78,7 +88,6 @@ export default function Home() {
       router.replace('/dashboard');
     }
   }, [departmentSetupId, isGenerated, router]);
-
 
   return (
     <TimetableProvider>
