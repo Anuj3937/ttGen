@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 import { Toaster } from '@/components/ui/toaster';
 import './globals.css';
+import { FirebaseClientProvider } from '@/firebase/client-provider';
+import { SetupProvider } from '@/context/SetupContext';
 
 export const metadata: Metadata = {
   title: 'Timetable Ace',
@@ -23,7 +25,9 @@ export default function RootLayout({
         />
       </head>
       <body className="font-body antialiased">
-        {children}
+        <FirebaseClientProvider>
+          <SetupProvider>{children}</SetupProvider>
+        </FirebaseClientProvider>
         <Toaster />
       </body>
     </html>

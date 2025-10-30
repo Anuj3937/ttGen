@@ -10,18 +10,31 @@ import Checkpoint4 from '@/components/checkpoints/Checkpoint4';
 import Checkpoint5 from '@/components/checkpoints/Checkpoint5';
 import Checkpoint6 from '@/components/checkpoints/Checkpoint6';
 import TimetableDashboard from '@/components/timetable/TimetableDashboard';
-import { useContext } from 'react';
+import { useContext, useEffect } from 'react';
 import { TimetableContext } from '@/context/TimetableContext';
-import { Toaster } from '@/components/ui/toaster';
+import { useSetup } from '@/context/SetupContext';
+import { useRouter } from 'next/navigation';
+
 
 const AppContent = () => {
-  const { step, isGenerated } = useContext(TimetableContext);
+  const { step, isGenerated, timetableData } = useContext(TimetableContext);
+  const { departmentSetupId } = useSetup();
+  const router = useRouter();
+
+  useEffect(() => {
+    // If a setup is complete and we have an ID, redirect to dashboard
+    if (departmentSetupId && isGenerated) {
+      router.replace('/dashboard');
+    }
+  }, [departmentSetupId, isGenerated, router]);
+
+
+  // If timetable has been generated, show the dashboard
+  if (isGenerated) {
+    return <TimetableDashboard />;
+  }
 
   const renderContent = () => {
-    if (isGenerated) {
-      return <TimetableDashboard />;
-    }
-
     switch (step) {
       case 1:
         return <Checkpoint1 />;
@@ -56,6 +69,17 @@ const AppContent = () => {
 };
 
 export default function Home() {
+  const { departmentSetupId, isGenerated } = useSetup();
+  const router = useRouter();
+
+  // Redirect to dashboard if setup is already completed.
+  useEffect(() => {
+    if (departmentSetupId && isGenerated) {
+      router.replace('/dashboard');
+    }
+  }, [departmentSetupId, isGenerated, router]);
+
+
   return (
     <TimetableProvider>
       <AppContent />
