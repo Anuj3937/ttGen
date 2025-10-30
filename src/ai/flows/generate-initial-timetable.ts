@@ -1,127 +1,127 @@
+// [COPY/PASTE THE ENTIRE FILE]
+//
+// src/ai/flows/generate-initial-timetable.ts
+
 'use server';
 
 /**
- * @fileOverview Generates an initial timetable draft based on the entered data.
+ * @fileOverview Generates a slotted timetable from a pre-allocated list of classes.
  *
- * - generateInitialTimetable - A function that generates the initial timetable.
- * - GenerateInitialTimetableInput - The input type for the generateInitialTimetable function.
- * - GenerateInitialTimetableOutput - The return type for the generateInitialTimetable function.
+ * This flow does NOT allocate faculty. It only places pre-allocated
+ * classes into time slots based on a set of constraints.
+ *
+ * - generateInitialTimetable - A function that places entries into slots.
+ * - GenerateInitialTimetableInput - The input type (list of pre-allocated entries).
+ * - GenerateInitialTimetableOutput - The output type (list of slotted entries).
  */
 
-import {ai} from '@/ai/genkit';
-import {z} from 'genkit';
+import { ai } from '@/ai/genkit';
+import { z } from 'zod'; // <-- CORRECTED IMPORT
 
+// This is the schema for a single pre-allocated class.
+// This is the INPUT to the AI.
+const AllocationEntrySchema = z.object({
+  id: z.string().describe('A unique identifier for this class entry.'),
+  subjectCode: z.string().describe('The subject code.'),
+  subjectName: z.string().describe('The name of the subject.'),
+  facultyName: z.string().describe('The faculty member pre-assigned to this class.'),
+  divisionName: z.string().describe('The division this class is for (e.g., "CE-SE-A").'),
+  batchIdentifier: z.string().optional().describe('The specific batch, if this is a lab (e.g., "B1", "B2").'),
+  roomType: z.enum(['Lab', 'Classroom']).describe('The required room type.'),
+
+  // This is the key field for conflict detection.
+  // "CE-SE-A" for theory (whole class busy)
+  // "CE-SE-A_B1" for a lab (only batch 1 is busy)
+  schedulableUnit: z.string().describe('The unit that is busy. Batches from the same division (e.g., "CE-SE-A_B1", "CE-SE-A_B2") are different units and CAN be scheduled at the same time.'),
+
+  duration: z.number().describe('The number of consecutive time slots this class requires (e.g., 1 for theory, 2 for lab).'),
+});
+
+// This is the input schema for the *entire flow*.
 const GenerateInitialTimetableInputSchema = z.object({
-  departmentName: z.string().describe('The name of the department.'),
-  branches: z.array(z.string()).describe('The branches in the department.'),
-  academicYear: z.string().describe('The academic year.'),
-  semesterType: z.enum(['ODD', 'EVEN']).describe('The semester type.'),
+  allocations: z.array(AllocationEntrySchema).describe('The list of pre-allocated classes to be scheduled.'),
+  rooms: z.array(
+    z.object({
+      roomNumber: z.string(),
+      roomType: z.enum(['Lab', 'Classroom']),
+    })
+  ).describe('The list of available rooms and their types.'),
   workingDays: z.array(z.string()).describe('The working days of the week.'),
-  timeSlots: z.array(z.string()).describe('The time slots available.'),
+  timeSlots: z.array(z.string()).describe('The time slots available each day.'),
   labSchedulingPreference: z
     .boolean()
     .describe('Whether afternoon slots are preferred for labs.'),
-  divisions: z.array(
-    z.object({
-      branch: z.string().describe('The branch of the division.'),
-      year: z.string().describe('The year of the division.'),
-      semester: z.string().describe('The semester of the division.'),
-      divisionName: z.string().describe('The name of the division.'),
-      numberOfBatches: z.number().describe('The number of batches in the division.'),
-    })
-  ).describe('The divisions and batches.'),
-  subjects: z.array(
-    z.object({
-      subjectCode: z.string().describe('The subject code.'),
-      subjectName: z.string().describe('The subject name.'),
-      branch: z.string().describe('The branch of the subject.'),
-      year: z.string().describe('The year of the subject.'),
-      semester: z.string().describe('The semester of the subject.'),
-      theoryHoursPerWeek: z.number().describe('The number of theory hours per week.'),
-      practicalHoursPerWeek: z.number().describe('The number of practical hours per week.'),
-      type: z.string().describe('The type of the subject (Core, Lab, Elective, etc.).'),
-    })
-  ).describe('The subjects to be scheduled.'),
-  faculty: z.array(
-    z.object({
-      facultyName: z.string().describe('The name of the faculty.'),
-      employeeID: z.string().describe('The employee ID of the faculty.'),
-      designation: z.string().describe('The designation of the faculty.'),
-      maxWeeklyHours: z.number().describe('The maximum weekly hours of the faculty.'),
-      qualifiedSubjects: z.array(z.string()).describe('The subjects the faculty is qualified to teach.'),
-      preferLabs: z.boolean().describe('Whether the faculty prefers teaching labs.'),
-    })
-  ).describe('The faculty members available.'),
-  rooms: z.array(
-    z.object({
-      roomNumber: z.string().describe('The room number.'),
-      roomType: z.enum(['Lab', 'Classroom']).describe('The type of the room.'),
-      capacity: z.number().describe('The capacity of the room.'),
-      building: z.string().describe('The building the room is in.'),
-    })
-  ).describe('The rooms available.'),
 });
+
 export type GenerateInitialTimetableInput = z.infer<typeof GenerateInitialTimetableInputSchema>;
 
-const GenerateInitialTimetableOutputSchema = z.object({
-  timetable: z.array(
-    z.object({
-      subjectCode: z.string().describe('The subject code.'),
-      facultyName: z.string().describe('The name of the faculty assigned.'),
-      roomNumber: z.string().describe('The room number assigned.'),
-      divisionName: z.string().describe('The division name.'),
-      day: z.string().describe('The day of the week.'),
-      timeSlot: z.string().describe('The time slot assigned.'),
-    })
-  ).describe('The generated timetable.'),
-  unassignedSubjects: z.array(z.string()).describe('Subjects that could not be assigned.'),
+// This is the schema for a single *slotted* class.
+// This is the OUTPUT from the AI.
+const TimetableEntrySchema = z.object({
+  subjectCode: z.string().describe('The subject code.'),
+  facultyName: z.string().describe('The name of the faculty assigned.'),
+  roomNumber: z.string().describe('The room number assigned.'),
+  divisionName: z.string().describe('The division name (e.g., "CE-SE-A").'),
+  batchIdentifier: z.string().optional().describe('The batch identifier if it was a lab (e.g., "B1").'),
+  day: z.string().describe('The day of the week.'),
+  timeSlot: z.string().describe('The *starting* time slot assigned.'),
+  // Note: The AI will just return the single TimetableEntry.
+  // Our frontend will understand that a 2-hour lab at 13:00 also occupies 14:00.
 });
+
+// The output of the flow is a list of slotted entries and a list of failures.
+const GenerateInitialTimetableOutputSchema = z.object({
+  timetable: z.array(TimetableEntrySchema).describe('The generated timetable with assigned slots.'),
+  unassignedEntries: z.array(z.string()).describe('A list of IDs for allocations that could not be scheduled.'),
+});
+
 export type GenerateInitialTimetableOutput = z.infer<typeof GenerateInitialTimetableOutputSchema>;
 
-export async function generateInitialTimetable(input: GenerateInitialTimetableInput): Promise<GenerateInitialTimetableOutput> {
+export async function generateInitialTimetable(input: GenerateInitialTimetableInput): Promise<
+  GenerateInitialTimetableOutput
+> {
   return generateInitialTimetableFlow(input);
 }
 
-const prompt = ai.definePrompt({
+// <-- RENAMED VARIABLE for clarity and safety
+const generateInitialTimetablePrompt = ai.definePrompt({
   name: 'generateInitialTimetablePrompt',
-  input: {schema: GenerateInitialTimetableInputSchema},
-  output: {schema: GenerateInitialTimetableOutputSchema},
-  prompt: `You are a timetable generation expert. Your task is to generate an initial timetable based on the provided data, adhering to several constraints.
+  input: { schema: GenerateInitialTimetableInputSchema },
+  output: { schema: GenerateInitialTimetableOutputSchema },
+  prompt: `You are a highly intelligent scheduling assistant. Your task is to take a list of pre-allocated classes and assign each one to a valid room, day, and time slot. You MUST NOT change the faculty, subject, or division.
 
-Department Name: {{{departmentName}}}
-Branches: {{#each branches}}{{{this}}}{{#unless @last}}, {{/unless}}{{/each}}
-Academic Year: {{{academicYear}}}
-Semester Type: {{{semesterType}}}
+**Available Resources:**
 Working Days: {{#each workingDays}}{{{this}}}{{#unless @last}}, {{/unless}}{{/each}}
-Time Slots: {{#each timeSlots}}{{{this}}}{{#unless @last}}, {{/unless}}{{/each}}
-Lab Scheduling Preference: {{{labSchedulingPreference}}}
-
-Divisions: {{#each divisions}}
-- Branch: {{{this.branch}}}, Year: {{{this.year}}}, Semester: {{{this.semester}}}, Division: {{{this.divisionName}}}, Batches: {{{this.numberOfBatches}}}{{/each}}
-
-Subjects: {{#each subjects}}
-- Code: {{{this.subjectCode}}}, Name: {{{this.subjectName}}}, Branch: {{{this.branch}}}, Year: {{{this.year}}}, Semester: {{{this.semester}}}, Theory Hours: {{{this.theoryHoursPerWeek}}}, Practical Hours: {{{this.practicalHoursPerWeek}}}, Type: {{{this.type}}}{{/each}}
-
-Faculty: {{#each faculty}}
-- Name: {{{this.facultyName}}}, ID: {{{this.employeeID}}}, Designation: {{{this.designation}}}, Max Hours: {{{this.maxWeeklyHours}}}, Qualified Subjects: {{#each this.qualifiedSubjects}}{{{this}}}{{#unless @last}}, {{/unless}}{{/each}}, Prefers Labs: {{{this.preferLabs}}}{{/each}}
-
+Time Slots: {{#each timeSlots}}{{{this}}}{{#unless @last}}, {{/unless}}{{/each}} (Total {{timeSlots.length}} slots per day)
 Rooms: {{#each rooms}}
-- Number: {{{this.roomNumber}}}, Type: {{{this.roomType}}}, Capacity: {{{this.capacity}}}, Building: {{{this.building}}}{{/each}}
+- {{{this.roomNumber}}} (Type: {{{this.roomType}}}){{/each}}
+Lab Preference: {{{labSchedulingPreference}}}
 
-Please generate a timetable as a JSON object with a 'timetable' array and an 'unassignedSubjects' array.
+**Classes to Schedule:**
+{{#each allocations}}
+- ID: {{{this.id}}}
+  Entry: {{{this.subjectName}}} ({{{this.subjectCode}}})
+  Faculty: {{{this.facultyName}}}
+  Unit: {{{this.schedulableUnit}}}
+  Duration: {{{this.duration}}} slots
+  Room Type: {{{this.roomType}}}
+  {{#if this.batchIdentifier}}Batch: {{{this.batchIdentifier}}}{{/if}}
+{{/each}}
 
-**Constraints:**
-1.  **Faculty Conflict:** A faculty member cannot be assigned to two different classes in the same time slot.
-2.  **Division Conflict:** A division cannot have two different subjects scheduled in the same time slot.
-3.  **Room Conflict:** A room cannot be used for two different classes in the same time slot.
-4.  **Consecutive Lectures:** A theory subject (any subject that is not type 'Lab') should not be scheduled in consecutive time slots for the same division on the same day.
-5.  **Lab Sessions:** Subjects of type 'Lab' with 2 practical hours per week must be scheduled in a single, 2-hour consecutive block on one day.
-6.  **Weekly Hours:** The total number of hours scheduled for each subject must match its 'theoryHoursPerWeek' and 'practicalHoursPerWeek'.
-7.  **Faculty Load:** Do not exceed the 'maxWeeklyHours' for any faculty member.
-8.  **Room Type:** 'Lab' type subjects must be assigned to rooms of type 'Lab'. 'Classroom' is for other subjects.
-9.  **Lab Preference:** If 'labSchedulingPreference' is true, prioritize scheduling labs in the afternoon slots.
+**SCHEDULING CONSTRAINTS (MANDATORY):**
+1.  **Faculty Conflict:** A faculty member (e.g., "{{allocations.[0].facultyName}}") cannot be in two places at once.
+2.  **Room Conflict:** A room (e.g., "CR-101") cannot be used by two classes at once.
+3.  **Unit Conflict:** A schedulable unit (e.g., "{{allocations.[0].schedulableUnit}}") cannot have two classes at the same time.
+    * **CRITICAL:** Units like "CE-SE-A_B1" and "CE-SE-A_B2" are DIFFERENT. They represent different batches and CAN be scheduled at the same time (e.g., A1 in DSA Lab, A2 in OS Lab). A unit like "CE-SE-A" (for theory) is for the *entire* division and IS NOT THE SAME as "CE-SE-A_B1".
+4.  **Consecutive Duration:** An entry with \`duration: 2\` MUST be scheduled in two *consecutive* time slots (e.g., "13:00-14:00" and "14:00-15:00"). Assign the *starting* slot. Do not schedule a 2-hour lab in the last slot of the day.
+5.  **Room Type:** An entry requiring a 'Lab' room MUST be assigned to a 'Lab' room. 'Classroom' entries must go in 'Classroom' rooms.
+6.  **Lab Preference:** If \`labSchedulingPreference\` is true, try to schedule 'Lab' roomType entries in the afternoon.
+7.  **Consecutive Theory:** A specific 'schedulableUnit' (e.g., "CE-SE-A") should not have the same theory subject (e.g., "DSA") in consecutive slots on the same day.
 
-First, try to schedule all subjects. If a subject cannot be scheduled without violating the constraints, add its 'subjectCode' to the 'unassignedSubjects' array.
+**Output:**
+Return a JSON object with two keys:
+1.  \`timetable\`: An array of objects. Each object must be a *successfully scheduled* class and include: \`subjectCode\`, \`facultyName\`, \`roomNumber\`, \`divisionName\`, \`batchIdentifier\` (if present), \`day\`, and \`timeSlot\` (the *starting* slot).
+2.  \`unassignedEntries\`: An array of \`id\` strings for any allocation entries you could not schedule without violating a constraint.
 `,
 });
 
@@ -131,23 +131,25 @@ const generateInitialTimetableFlow = ai.defineFlow(
     inputSchema: GenerateInitialTimetableInputSchema,
     outputSchema: GenerateInitialTimetableOutputSchema,
   },
-  async input => {
+  async (input) => {
     const maxRetries = 3;
     let attempt = 0;
     while (attempt < maxRetries) {
       try {
-        const {output} = await prompt(input);
+        // <-- USING RENAMED VARIABLE
+        const { output } = await generateInitialTimetablePrompt(input);
         return output!;
       } catch (error) {
         attempt++;
-        console.log(`Attempt ${attempt} failed. Retrying in 2 seconds...`);
+        console.error(`Attempt ${attempt} failed. Retrying...`, error);
         if (attempt >= maxRetries) {
+          console.error('Timetable generation failed after multiple retries.');
           throw error;
         }
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise((resolve) => setTimeout(resolve, 2000));
       }
     }
-    // This should not be reached, but typescript needs a return path.
-    throw new Error('Timetable generation failed after multiple retries.');
+    // This should not be reached
+    throw new Error('Timetable generation failed.');
   }
 );

@@ -1,3 +1,7 @@
+// [COPY/PASTE THE ENTIRE FILE]
+//
+// src/components/timetable/TimetableDashboard.tsx
+
 'use client';
 import { useTimetable } from '@/context/TimetableContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
@@ -37,24 +41,30 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '../ui/form';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { ScrollArea } from '../ui/scroll-area';
+import { Badge } from '../ui/badge'; // <-- IMPORT BADGE
 
 // --- Zod Schema for the Edit Form ---
 const editSlotSchema = z.object({
   subjectCode: z.string().min(1, 'Subject is required.'),
   facultyName: z.string().min(1, 'Faculty is required.'),
   roomNumber: z.string().min(1, 'Room is required.'),
+  // Note: We don't need batchIdentifier in the *edit* form
+  // as a lab subject implies a batch, which is handled by the schedulableUnit.
+  // Manual edits here are for simple swaps.
 });
 type EditSlotFormData = z.infer<typeof editSlotSchema>;
 
+
 // --- Draggable Entry Component (with Single Click Edit) ---
+// --- THIS IS THE UPDATED COMPONENT ---
 const DraggableTimetableEntry = ({
   entry,
   filterBy,
-  onEditClick, // Changed from onDoubleClick
+  onEditClick,
 }: {
   entry: TimetableEntryType;
   filterBy: 'divisionName' | 'facultyName' | 'roomNumber';
-  onEditClick: (entry: TimetableEntryType) => void; // Pass handler
+  onEditClick: (entry: TimetableEntryType) => void;
 }) => {
   const { timetableData } = useTimetable();
   const {
@@ -64,7 +74,7 @@ const DraggableTimetableEntry = ({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: `${entry.day}-${entry.timeSlot}-${entry.subjectCode}-${entry.divisionName}` });
+  } = useSortable({ id: `${entry.day}-${entry.timeSlot}-${entry.subjectCode}-${entry.divisionName}-${entry.batchIdentifier || ''}` }); // Added batchIdentifier to ID
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -83,7 +93,18 @@ const DraggableTimetableEntry = ({
       {...listeners}
     >
       <div className="bg-primary/10 border border-primary/20 rounded-lg p-2 text-xs space-y-1 mb-1 relative group">
-        <p className="font-bold">{entry.subjectCode}</p>
+        
+        {/* --- MODIFICATION START --- */}
+        <div className="flex justify-between items-center">
+          <p className="font-bold">{entry.subjectCode}</p>
+          {entry.batchIdentifier && (
+            <Badge variant="secondary" className="text-xs px-1.5 py-0">
+              {entry.batchIdentifier}
+            </Badge>
+          )}
+        </div>
+        {/* --- MODIFICATION END --- */}
+
         <p>{subject?.subjectName}</p>
         <p className="text-muted-foreground">{filterBy !== 'facultyName' ? entry.facultyName : ''}</p>
         <p className="text-muted-foreground">{filterBy !== 'roomNumber' ? `Room: ${entry.roomNumber}` : ''}</p>
@@ -101,6 +122,7 @@ const DraggableTimetableEntry = ({
     </div>
   );
 };
+// --- END OF UPDATED COMPONENT ---
 
 
 export default function TimetableDashboard() {
@@ -118,6 +140,7 @@ export default function TimetableDashboard() {
     day: string;
     timeSlot: string;
     divisionName: string; // The division currently being viewed
+    batchIdentifier?: string; // The batch being viewed (if any)
     existingEntry?: TimetableEntryType | null; // The entry being edited (if any)
   } | null>(null);
 
@@ -180,7 +203,7 @@ export default function TimetableDashboard() {
   // --- Combined Validation Logic ---
   const isSlotValid = useCallback((
     currentTimetable: TimetableEntryType[],
-    entryDataToCheck: TimetableEntryType, // The new/moved entry's data
+    entryDataToCheck: Omit<TimetableEntryType, 'day' | 'timeSlot'>, // Data for the entry being checked
     newDay: string,
     newTimeSlot: string,
     originalEntryToIgnore?: TimetableEntryType | null // The entry we are moving/replacing
@@ -189,13 +212,19 @@ export default function TimetableDashboard() {
     const subjectDetails = subjectList.find(s => s.subjectCode === entryDataToCheck.subjectCode);
     const roomDetails = roomList.find(r => r.roomNumber === entryDataToCheck.roomNumber);
   
+    // Determine the schedulable unit for the entry being checked
+    const schedulableUnitToCheck = entryDataToCheck.batchIdentifier
+      ? `${entryDataToCheck.divisionName}_${entryDataToCheck.batchIdentifier}`
+      : entryDataToCheck.divisionName;
+
     for (const existingEntry of currentTimetable) {
       // If we are moving/replacing an entry, ignore the *original* entry in the list
       if (
         originalEntryToIgnore &&
         existingEntry.day === originalEntryToIgnore.day &&
         existingEntry.timeSlot === originalEntryToIgnore.timeSlot &&
-        existingEntry.divisionName === originalEntryToIgnore.divisionName
+        existingEntry.divisionName === originalEntryToIgnore.divisionName &&
+        existingEntry.batchIdentifier === originalEntryToIgnore.batchIdentifier
       ) {
         continue;
       }
@@ -210,9 +239,24 @@ export default function TimetableDashboard() {
         if (existingEntry.roomNumber === entryDataToCheck.roomNumber) {
           return { valid: false, conflictType: 'Room Conflict', conflictingEntry: existingEntry };
         }
-        // Division Conflict
-        if (existingEntry.divisionName === entryDataToCheck.divisionName) {
-          return { valid: false, conflictType: 'Division Conflict', conflictingEntry: existingEntry };
+        
+        // **NEW** Unit Conflict (replaces simple Division Conflict)
+        const existingSchedulableUnit = existingEntry.batchIdentifier
+          ? `${existingEntry.divisionName}_${existingEntry.batchIdentifier}`
+          : existingEntry.divisionName;
+
+        // "CE-SE-A" conflicts with "CE-SE-A"
+        // "CE-SE-A_B1" conflicts with "CE-SE-A_B1"
+        // "CE-SE-A" (theory) conflicts with "CE-SE-A_B1" (lab)
+        // "CE-SE-A_B1" (lab) conflicts with "CE-SE-A" (theory)
+        // **BUT** "CE-SE-A_B1" does *NOT* conflict with "CE-SE-A_B2"
+        
+        if (
+          schedulableUnitToCheck === existingSchedulableUnit ||
+          schedulableUnitToCheck.startsWith(`${existingSchedulableUnit}_`) ||
+          existingSchedulableUnit.startsWith(`${schedulableUnitToCheck}_`)
+        ) {
+           return { valid: false, conflictType: 'Division/Batch Conflict', conflictingEntry: existingEntry };
         }
       }
     }
@@ -240,6 +284,9 @@ export default function TimetableDashboard() {
     if (!over || active.id === over.id) {
       return; // No move or dropped on itself
     }
+    
+    // active.id is now: `${entry.day}-${entry.timeSlot}-${entry.subjectCode}-${entry.divisionName}-${entry.batchIdentifier || ''}`
+    // over.id is: `${day}_${time}`
 
     const [newDay, newTime] = (over.id as string).split('_'); // Dropped onto a cell 'day_time'
     if (!newDay || !newTime) {
@@ -253,21 +300,22 @@ export default function TimetableDashboard() {
 
       // 1. Find the entry *inside* the state updater using the active ID
       const activeEntry = oldTimetable.find(
-        entry => `${entry.day}-${entry.timeSlot}-${entry.subjectCode}-${entry.divisionName}` === active.id
+        entry => `${entry.day}-${entry.timeSlot}-${entry.subjectCode}-${entry.divisionName}-${entry.batchIdentifier || ''}` === active.id
       );
 
       if (!activeEntry) {
         console.error("Could not find active entry *inside state updater*:", active.id);
         return prevData; // Return previous state, no change
       }
-
+      
       // 2. Validate the move using the *current* timetable state
+      // We pass the *data* of the active entry, as the entryDataToCheck
       const { valid, conflictType, conflictingEntry } = isSlotValid(
           oldTimetable, 
-          activeEntry, 
+          activeEntry, // The data to check
           newDay, 
           newTime, 
-          activeEntry // Pass the entry itself as the one to ignore from its *original* position
+          activeEntry // The original entry to ignore from its old position
       );
 
       if (!valid) {
@@ -292,27 +340,64 @@ export default function TimetableDashboard() {
       }
 
       const newTimetable = [...oldTimetable]; // Create new array
-
-      // Find if there's an entry in the 'over' slot *for the same division* to swap with
-      const overEntryIndex = newTimetable.findIndex(
-          e => e.day === newDay && e.timeSlot === newTime && e.divisionName === activeEntry.divisionName
-      );
+      
+      // Find *all* entries in the 'over' slot for the *same schedulable unit*
+      // (This is now complex, a simple swap is hard)
+      // For now, let's just MOVE. A true swap is more complex.
+      // TODO: Implement a proper swap
+      
+      // Find if there's an entry in the 'over' slot *for the same division/batch* to swap with
+      const activeSchedulableUnit = activeEntry.batchIdentifier
+          ? `${activeEntry.divisionName}_${activeEntry.batchIdentifier}`
+          : activeEntry.divisionName;
+          
+      const overEntryIndex = newTimetable.findIndex(e => {
+          const existingSchedulableUnit = e.batchIdentifier
+            ? `${e.divisionName}_${e.batchIdentifier}`
+            : e.divisionName;
+          
+          return e.day === newDay && e.timeSlot === newTime && (
+            existingSchedulableUnit === activeSchedulableUnit ||
+            existingSchedulableUnit.startsWith(`${activeSchedulableUnit}_`) ||
+            activeSchedulableUnit.startsWith(`${existingSchedulableUnit}_`)
+          );
+      });
 
       if (overEntryIndex > -1) {
-        // Swap
+        // A conflict *should* have been detected, but if we are here,
+        // we'll try a swap.
         const overEntry = newTimetable[overEntryIndex];
-        newTimetable[activeEntryIndex] = {
-            ...overEntry,
-            day: activeEntry.day,
-            timeSlot: activeEntry.timeSlot,
-        };
-         newTimetable[overEntryIndex] = {
-            ...activeEntry,
-            day: newDay,
-            timeSlot: newTime,
-        };
+        
+        // Check if swapping *back* is valid for the 'over' entry
+        const { valid: swapValid } = isSlotValid(
+            oldTimetable,
+            overEntry,
+            activeEntry.day,
+            activeEntry.timeSlot,
+            overEntry // Ignore the 'over' entry from its original position
+        );
+        
+        if (swapValid) {
+            newTimetable[activeEntryIndex] = {
+                ...overEntry,
+                day: activeEntry.day,
+                timeSlot: activeEntry.timeSlot,
+            };
+             newTimetable[overEntryIndex] = {
+                ...activeEntry,
+                day: newDay,
+                timeSlot: newTime,
+            };
+        } else {
+             toast({
+              variant: 'destructive',
+              title: 'Invalid Swap',
+              description: `Cannot swap with ${overEntry.subjectCode} as it causes a conflict at the new location.`,
+            });
+            return prevData;
+        }
       } else {
-        // Move to an empty slot for this division
+        // Move to an empty slot for this division/batch
         newTimetable[activeEntryIndex] = {
             ...activeEntry,
             day: newDay,
@@ -331,21 +416,52 @@ export default function TimetableDashboard() {
 
   // --- Handlers for Manual Edit Dialog ---
   const openEditDialog = (day: string, timeSlot: string, currentDivision: string, entryToEdit?: TimetableEntryType | null) => {
-    setEditingSlot({ day, timeSlot, divisionName: currentDivision, existingEntry: entryToEdit });
+    setEditingSlot({
+      day,
+      timeSlot,
+      divisionName: entryToEdit?.divisionName || currentDivision,
+      batchIdentifier: entryToEdit?.batchIdentifier,
+      existingEntry: entryToEdit
+    });
     setIsEditDialogOpen(true);
   };
 
   const handleEditFormSubmit = (formData: EditSlotFormData) => {
     if (!editingSlot) return;
 
-    const { day, timeSlot, divisionName, existingEntry } = editingSlot;
+    const { day, timeSlot, divisionName, batchIdentifier, existingEntry } = editingSlot;
 
+    // This is the new/updated entry data
     const newEntryData: TimetableEntryType = {
       ...formData,
       day,
       timeSlot,
       divisionName,
+      // If we are editing an existing lab, keep its batch identifier
+      batchIdentifier: existingEntry?.batchIdentifier || undefined, 
     };
+    
+    // We must find the *type* of the *new* subject to see if it's a lab
+    const newSubject = subjectList.find(s => s.subjectCode === formData.subjectCode);
+    
+    // If we are ADDING a new entry, and it's a LAB, we have a problem.
+    // We don't know *which* batch to assign.
+    // For now, this edit form assumes we are only editing THEORY or
+    // swapping an *existing* lab.
+    // A "true" add would need to ask for the batch.
+    if (!existingEntry && newSubject?.type === 'Lab') {
+        toast({
+            variant: 'destructive',
+            title: 'Cannot Add Lab',
+            description: `Manually adding new labs is not supported. Please clear a slot and add a theory class, or edit an existing lab.`,
+        });
+        return;
+    }
+    
+    // If the new subject is NOT a lab, remove the batch identifier
+    if (newSubject?.type !== 'Lab') {
+        delete newEntryData.batchIdentifier;
+    }
 
     // Validate the manually entered data
     const { valid, conflictType, conflictingEntry } = isSlotValid(
@@ -378,7 +494,8 @@ export default function TimetableDashboard() {
           (e) =>
             e.day === existingEntry.day &&
             e.timeSlot === existingEntry.timeSlot &&
-            e.divisionName === existingEntry.divisionName
+            e.divisionName === existingEntry.divisionName &&
+            e.batchIdentifier === existingEntry.batchIdentifier
         )
       : -1;
     
@@ -387,7 +504,7 @@ export default function TimetableDashboard() {
       // Update existing entry
       updatedTimetable[existingIndex] = newEntryData;
     } else {
-      // Add new entry
+      // Add new entry (will only be theory)
       updatedTimetable.push(newEntryData);
     }
 
@@ -403,7 +520,7 @@ export default function TimetableDashboard() {
   const handleClearSlot = () => {
     if (!editingSlot || !editingSlot.existingEntry) return;
 
-    const { day, timeSlot, divisionName } = editingSlot.existingEntry;
+    const { day, timeSlot, divisionName, batchIdentifier } = editingSlot.existingEntry;
 
     // Filter out the *exact* entry to be cleared
     const updatedTimetable = timetable.filter(
@@ -411,7 +528,7 @@ export default function TimetableDashboard() {
           e.day === day && 
           e.timeSlot === timeSlot && 
           e.divisionName === divisionName &&
-          e.subjectCode === editingSlot.existingEntry?.subjectCode // Be precise
+          e.batchIdentifier === batchIdentifier // Be precise
       )
     );
 
@@ -429,21 +546,26 @@ export default function TimetableDashboard() {
     const { setNodeRef, isOver } = useSortable({ id: `${day}_${time}` });
 
     // Find if there's *any* entry in this cell for the *current division*
-    const entryInCellForDivision = timetable.find(e => e.day === day && e.timeSlot === time && e.divisionName === currentDivision);
+    // This is tricky now with batches. We check if the division *or* any of its batches are busy.
+    const entryInCellForDivision = timetable.find(e => 
+      e.day === day && 
+      e.timeSlot === time && 
+      e.divisionName === currentDivision
+    );
 
     return (
         <td
             ref={setNodeRef}
             className={`p-1 border align-top min-w-[150px] relative ${isOver ? 'bg-accent/20' : ''}`}
             onDoubleClick={() => {
-                // Only trigger add on double-click if the cell is empty
+                // Only trigger add on double-click if the cell is empty *for the whole division*
                 if (!entryInCellForDivision) {
                     openEditDialog(day, time, currentDivision);
                 }
             }}
         >
             {children}
-            {/* Show Add button only if cell is empty for this division */}
+            {/* Show Add button only if cell is empty for this division (no theory) */}
             {!entryInCellForDivision && (
                 <button
                     onClick={() => openEditDialog(day, time, currentDivision)}
@@ -473,7 +595,7 @@ export default function TimetableDashboard() {
       );
       const entryIds = timetable.map(
         (entry) =>
-          `${entry.day}-${entry.timeSlot}-${entry.subjectCode}-${entry.divisionName}`
+          `${entry.day}-${entry.timeSlot}-${entry.subjectCode}-${entry.divisionName}-${entry.batchIdentifier || ''}` // ID now includes batch
       );
       return [...cellIds, ...entryIds];
     }, [workingDays, timeSlots, timetable]);
@@ -599,7 +721,7 @@ export default function TimetableDashboard() {
                                                                   {getEntriesForCell(day, time, val, filterBy).map(
                                                                       (entry, i) => (
                                                                           <DraggableTimetableEntry
-                                                                              key={`${i}-${entry.subjectCode}-${entry.divisionName}`}
+                                                                              key={`${i}-${entry.subjectCode}-${entry.divisionName}-${entry.batchIdentifier || ''}`}
                                                                               entry={entry}
                                                                               filterBy={filterBy}
                                                                               onEditClick={() => openEditDialog(entry.day, entry.timeSlot, entry.divisionName, entry)}
@@ -666,9 +788,13 @@ export default function TimetableDashboard() {
       
       const cellStrings = entries.map(entry => {
         const subjectName = subjectList.find(s => s.subjectCode === entry.subjectCode)?.subjectName || '';
-        let parts = [`${entry.subjectCode} (${subjectName})`];
+        
+        // Add batch to subject if present
+        let subjectPart = `${entry.subjectCode}${entry.batchIdentifier ? ` (${entry.batchIdentifier})` : ''}`;
+        
+        let parts = [`${subjectPart} - ${subjectName}`];
 
-        if (filterBy !== 'divisionName') parts.push(`Div: ${entry.divisionName}`);
+        if (filterBy !== 'divisionName') parts.push(`Div: ${entry.divisionName}${entry.batchIdentifier ? ` (${entry.batchIdentifier})` : ''}`);
         if (filterBy !== 'facultyName') parts.push(`Faculty: ${entry.facultyName}`);
         if (filterBy !== 'roomNumber') parts.push(`Room: ${entry.roomNumber}`);
         
@@ -743,10 +869,9 @@ export default function TimetableDashboard() {
           </CardHeader>
           <CardContent>
             <ul className="list-disc pl-5 space-y-1">
-              {unassignedSubjects.map(code => {
-                const subject = subjectList.find(s => s.subjectCode === code);
-                return <li key={code}>{subject ? `${code} - ${subject.subjectName}` : code}</li>
-              })}
+              {unassignedSubjects.map(name => (
+                <li key={name}>{name}</li>
+              ))}
             </ul>
           </CardContent>
         </Card>
@@ -762,9 +887,11 @@ export default function TimetableDashboard() {
           <DialogHeader>
             <DialogTitle>
               {editingSlot?.existingEntry ? 'Edit Slot' : 'Add Slot'} - {editingSlot?.divisionName}
+              {editingSlot?.batchIdentifier && ` (${editingSlot.batchIdentifier})`}
             </DialogTitle>
             <DialogDescription>
               Manually assign a subject, faculty, and room for {editingSlot?.day} at {editingSlot?.timeSlot}.
+              Adding new labs is not supported here.
             </DialogDescription>
           </DialogHeader>
           <Form {...editForm}>
@@ -784,8 +911,13 @@ export default function TimetableDashboard() {
                       <SelectContent>
                          <ScrollArea className="h-48">
                             {subjectList
-                              // Optionally filter subjects relevant to the division's branch/year
+                              // Filter subjects relevant to the division's branch/year
                               .filter(s => editingSlot?.divisionName?.startsWith(`${s.branch}-${s.year}`))
+                              // Filter OUT labs if this is a NEW entry
+                              .filter(s => {
+                                  if (editingSlot?.existingEntry) return true; // If editing, show all
+                                  return s.type !== 'Lab'; // If adding, hide labs
+                              })
                               .map(s => (
                               <SelectItem key={s.id} value={s.subjectCode}>
                                 {s.subjectCode} - {s.subjectName} ({s.type})
@@ -849,8 +981,17 @@ export default function TimetableDashboard() {
                             .filter(r => {
                                 const selectedSubjectCode = editForm.watch('subjectCode');
                                 const selectedSubject = subjectList.find(s => s.subjectCode === selectedSubjectCode);
-                                if (!selectedSubject) return true; // Show all if no subject selected
-                                return selectedSubject.type === 'Lab' ? r.roomType === 'Lab' : r.roomType === 'Classroom';
+                                
+                                // If editing an existing lab, only show labs
+                                if (editingSlot?.existingEntry?.batchIdentifier) {
+                                    return r.roomType === 'Lab';
+                                }
+                                // If subject selected, filter by its type
+                                if (selectedSubject) {
+                                  return selectedSubject.type === 'Lab' ? r.roomType === 'Lab' : r.roomType === 'Classroom';
+                                }
+                                // Otherwise, show all (though labs will be filtered out)
+                                return true;
                             })
                            .map(r => (
                               <SelectItem key={r.id} value={r.roomNumber}>

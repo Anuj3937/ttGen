@@ -1,3 +1,7 @@
+// [COPY/PASTE THE ENTIRE FILE]
+//
+// src/lib/types.ts
+
 import { z } from 'zod';
 
 // Checkpoint 1: Basic Setup
@@ -76,7 +80,44 @@ export interface TimetableEntry {
   subjectCode: string;
   facultyName: string;
   roomNumber: string;
-  divisionName: string;
+  divisionName: string; // e.g., "CE-SE-A"
+  batchIdentifier?: string; // e.g., "B1", "B2" (NEWLY ADDED)
   day: string;
   timeSlot: string;
+}
+
+// --- NEWLY ADDED TYPES FOR ALGORITHM ---
+
+// The smallest schedulable unit (1 hour theory, 1 hour lab for 1 batch)
+export interface AllocatableUnit {
+  id: string; // "DSA_CE-SE-A_Theory_1" or "DSA_CE-SE-A_B1_Lab_1"
+  subject: Subject;
+  division: Division;
+  type: 'Theory' | 'Lab';
+  batchNumber?: number; // 1, 2, 3...
+  
+  // This is the key for conflict detection.
+  // Theory: "CE-SE-A" (whole division is busy)
+  // Lab: "CE-SE-A_B1" (only batch 1 is busy)
+  schedulableUnit: string; 
+  
+  // Used to group consecutive hours (e.g., 2-hour lab)
+  unitGroup: string; // "DSA_CE-SE-A_B1_Lab"
+}
+
+// The pre-allocated entry ready for the AI to schedule
+export interface AllocationEntry {
+  id: string; // Unique ID for this entry
+  subjectCode: string;
+  subjectName: string;
+  facultyName: string;
+  divisionName: string; // "CE-SE-A"
+  batchIdentifier?: string; // "B1"
+  roomType: 'Lab' | 'Classroom';
+  
+  // This is what the AI uses for conflict checks
+  schedulableUnit: string; // "CE-SE-A" or "CE-SE-A_B1"
+  
+  // How many consecutive slots are needed (e.g., 2 for a lab)
+  duration: number; 
 }
